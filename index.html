@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sơ Đồ Lớp Học - Xử Lý Trùng Tên Thông Minh</title>
+    <title>Sơ Đồ Lớp Học - Quản Lý Vi Phạm</title>
     <style>
         * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         body { background-color: #f4f6f9; margin: 0; padding: 20px; text-align: center; }
@@ -49,6 +49,29 @@
         .violation-date { font-weight: bold; color: #c62828; font-size: 0.85em; }
         .violation-text { color: #333; font-size: 0.9em; margin-top: 2px; }
         .loading { color: #1976d2; font-weight: bold; margin-bottom: 15px; }
+
+        /* Nút Chuông Float */
+        .bell-btn {
+            position: fixed; top: 20px; right: 20px; background: #ffffff;
+            border: 2px solid #1565c0; border-radius: 50%; width: 48px; height: 48px;
+            font-size: 22px; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+            transition: transform 0.2s; z-index: 999; display: flex; align-items: center; justify-content: center;
+        }
+        .bell-btn:hover { transform: scale(1.1); background-color: #e3f2fd; }
+
+        .bell-badge {
+            position: absolute; top: -5px; right: -5px; background-color: #e53935;
+            color: white; border-radius: 50%; padding: 2px 6px; font-size: 11px; font-weight: bold;
+        }
+
+        /* Giao diện Bảng Tóm Tắt Trong Modal */
+        .summary-modal-content { max-width: 650px !important; }
+        .summary-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+        .summary-table th, .summary-table td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+        .summary-table th { background-color: #1976d2; color: white; position: sticky; top: 0; }
+        .summary-table tr:nth-child(even) { background-color: #f9f9f9; }
+        .badge-count { background: #ffebee; color: #c62828; font-weight: bold; padding: 3px 8px; border-radius: 12px; }
+        .total-summary-badge { background: #e3f2fd; color: #1565c0; font-size: 13px; font-weight: bold; padding: 6px 12px; border-radius: 6px; display: inline-block; margin-bottom: 10px; }
     </style>
 </head>
 <body>
@@ -70,24 +93,133 @@
         </div>
     </div>
 
-    <!-- POPUP MODAL XEM CHI TIẾT -->
+    <!-- Nút Chuông Thông Báo -->
+    <button class="bell-btn" onclick="openSummaryModal()" title="Xem vi phạm tuần này">
+        🔔
+        <span class="bell-badge" id="violationCountBadge">0</span>
+    </button>
+
+    <!-- POPUP BẢNG TÓM TẮT VI PHẠM TUẦN HIỆN TẠI -->
+    <div id="summaryModal" class="modal">
+        <div class="modal-content summary-modal-content">
+            <span class="close-btn" onclick="closeSummaryModal()">&times;</span>
+            <h2 style="margin: 0 0 5px 0; color: #c62828; font-size: 20px;">📋 TÓM TẮT LỖI VI PHẠM TUẦN NÀY</h2>
+            <div class="total-summary-badge" id="weekRangeText">Tuần hiện tại</div>
+            
+            <div style="max-height: 400px; overflow-y: auto;">
+                <table class="summary-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 50px; text-align: center;">STT</th>
+                            <th style="width: 150px;">Họ và Tên</th>
+                            <th style="width: 90px; text-align: center;">Lỗi tuần này</th>
+                            <th>Chi tiết vi phạm</th>
+                        </tr>
+                    </thead>
+                    <tbody id="summaryTableBody">
+                        <!-- Dữ liệu điền tự động -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- POPUP MODAL XEM CHI TIẾT HỌC SINH -->
     <div id="infoModal" class="modal">
         <div class="modal-content">
             <span class="close-btn" onclick="closeModal()">&times;</span>
             <h3 id="studentName" style="margin: 0 0 5px 0; color: #1565c0;"></h3>
-            <p id="studentPhone" style="margin: 0 0 10px 0; font-size: 12px; color: #666;"></p>
+            <p id="studentPhone" style="margin: 0 0 5px 0; font-size: 12px; color: #666;"></p>
+            <p id="studentTotalViolations" style="margin: 0 0 10px 0; font-size: 13px; font-weight: bold; color: #d32f2f;"></p>
             <hr style="border: 0; border-top: 1px solid #eee;">
-            <p style="margin: 10px 0 5px 0; font-weight: bold; color: #555; font-size: 14px;">Lịch sử vi phạm:</p>
+            <p style="margin: 10px 0 5px 0; font-weight: bold; color: #555; font-size: 14px;">Lịch sử vi phạm chi tiết:</p>
             <div id="violationLogs"></div>
         </div>
     </div>
 
     <script>
-        const GOOGLE_SHEET_API_URL = "https://script.google.com/macros/s/AKfycbxfRjJNdnzxulUeEoCYypMiNYEqgM12ATmfJnUVjtQ6bzl-m0TYqGM-IlUZrI3_0JoeYg/exec";
+        const GOOGLE_SHEET_API_URL = "https://script.google.com/macros/s/AKfycbycNRbXqT_AxMw6iS4kzIYZAnlL40OE3rQReF-QsNbAf062T10wy17v-zobVVkr49EATw/exec";
 
         let studentDataStore = {};
+        // 1. Hàm parseDate mới: Xử lý triệt để cả chuỗi "2026-09-29T17:00:00.000Z" lẫn "30/9/2026"
+            function parseDate(dateString) {
+                if (!dateString) return null;
+                if (dateString instanceof Date) return dateString;
 
-        // 1. Khởi tạo sơ đồ 48 bàn trống
+                const str = dateString.toString().trim();
+
+                // Nếu là chuỗi ISO chứa 'T' (ví dụ: 2026-09-29T17:00:00.000Z)
+                if (str.includes('T')) {
+                    const datePart = str.split('T')[0]; // Lấy phần "2026-09-29"
+                    const parts = datePart.split('-');
+                    if (parts.length === 3) {
+                        return new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+                    }
+                }
+
+                // Nếu là chuỗi dạng DD/MM/YYYY hoặc D/M/YYYY (ví dụ: 30/9/2026)
+                if (str.includes('/')) {
+                    const datePart = str.split(' ')[0]; // Lấy phần ngày trước dấu cách (nếu có)
+                    const parts = datePart.split('/');
+                    if (parts.length === 3) {
+                        return new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
+                    }
+                }
+
+                // Nếu là chuỗi YYYY-MM-DD
+                if (str.includes('-')) {
+                    const parts = str.split('-');
+                    if (parts.length === 3) {
+                        return new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+                    }
+                }
+
+                const parsed = new Date(str);
+                return isNaN(parsed.getTime()) ? null : parsed;
+            }
+
+            // 2. Định dạng ngày hiển thị cực sạch dạng DD/MM/YYYY
+            function formatDateString(dateStr) {
+                const d = parseDate(dateStr);
+                if (!d) return dateStr || 'Không ghi';
+
+                const day = String(d.getDate()).padStart(2, '0');
+                const month = String(d.getMonth() + 1).padStart(2, '0');
+                const year = d.getFullYear();
+
+                return `${day}/${month}/${year}`;
+            }
+
+        // 3. Hàm kiểm tra ngày thuộc tuần hiện tại (Đã quy đổi múi giờ chuẩn)
+        function isDateInCurrentWeek(dateString) {
+            const date = parseDate(dateString);
+            if (!date) return false;
+
+            const today = new Date();
+
+            // Đưa về 00:00:00 local time
+            date.setHours(0, 0, 0, 0);
+            today.setHours(0, 0, 0, 0);
+
+            const day = today.getDay(); // Chủ nhật = 0, Thứ 2 = 1,...
+            const monday = new Date(today);
+
+            if (day === 0) {
+                monday.setDate(today.getDate() - 6);
+            } else {
+                monday.setDate(today.getDate() - (day - 1));
+            }
+
+            monday.setHours(0, 0, 0, 0);
+
+            const sunday = new Date(monday);
+            sunday.setDate(monday.getDate() + 6);
+            sunday.setHours(23, 59, 59, 999);
+
+            return date >= monday && date <= sunday;
+        }
+
+        // 4. Khởi tạo 48 bàn trống
         function initSeating() {
             const seatingArea = document.getElementById('seatingArea');
             seatingArea.innerHTML = '';
@@ -116,42 +248,36 @@
             }
         }
 
-        // 2. Thuật toán tạo tên ngắn gọn: Trùng tên thì hiện [Họ] [Tên], không trùng chỉ hiện [Tên]
+        // 5. Tạo tên gọn
         function generateShortNames(fullNameList) {
             const shortNameMap = {};
-
-            // Bước 1: Gom nhóm học sinh theo Tên chính (từ cuối cùng)
             const groups = {};
+
             fullNameList.forEach(fullName => {
                 const words = fullName.trim().split(/\s+/);
-                const firstName = words[words.length - 1]; // Tên chính
+                const firstName = words[words.length - 1]; 
                 if (!groups[firstName]) groups[firstName] = [];
                 groups[firstName].push({
                     fullName: fullName,
-                    lastName: words[0], // Họ (từ đầu tiên)
+                    lastName: words[0], 
                     firstName: firstName
                 });
             });
 
-            // Bước 2: Tạo tên hiển thị theo quy tắc mới
             for (let firstName in groups) {
                 const list = groups[firstName];
-
                 if (list.length === 1) {
-                    // Không bị trùng tên -> Chỉ hiện Tên chính (Ví dụ: "Anh", "Đệ")
                     shortNameMap[list[0].fullName] = firstName;
                 } else {
-                    // Bị trùng tên -> Hiện [Họ] [Tên] (Ví dụ: "Đỗ Huy", "Lưu Huy", "Nguyễn Huy")
                     list.forEach(item => {
                         shortNameMap[item.fullName] = `${item.lastName} ${item.firstName}`;
                     });
                 }
             }
-
             return shortNameMap;
         }
 
-        // 3. Tải dữ liệu từ Google Sheet và hiển thị lên Sơ đồ
+        // 6. Tải dữ liệu từ Sheet
         async function loadSheetData() {
             initSeating();
             try {
@@ -161,7 +287,6 @@
                 studentDataStore = {};
                 const fullNameList = [];
 
-                // 1. Lưu dữ liệu theo STT để không bị ghi đè khi trùng tên
                 data.forEach(item => {
                     if (item.hoTen) {
                         const fullName = item.hoTen.trim();
@@ -178,10 +303,8 @@
                     }
                 });
 
-                // 2. Tạo tên ngắn gọn xử lý trùng tên
                 const shortNames = generateShortNames(fullNameList);
 
-                // 3. Hiển thị lên sơ đồ lớp theo STT
                 for (let stt in studentDataStore) {
                     const student = studentDataStore[stt];
                     if (student.viTri && student.viTri >= 1 && student.viTri <= 48) {
@@ -195,7 +318,7 @@
                     }
                 }
 
-                document.getElementById('statusText').innerText = "✅ Đã đồng bộ dữ liệu cấu trúc 2 bảng!";
+                document.getElementById('statusText').innerText = "✅ Đã đồng bộ dữ liệu thành công!";
                 document.getElementById('statusText').style.color = "#2e7d32";
 
             } catch (error) {
@@ -203,9 +326,11 @@
                 document.getElementById('statusText').innerText = "❌ Lỗi kết nối dữ liệu Google Sheet!";
                 document.getElementById('statusText').style.color = "#d32f2f";
             }
+
+            renderSummaryTable();
         }
 
-        // 4. Hiển thị popup vi phạm (Xem đầy đủ Họ và Tên)
+        // 7. Hiển thị Popup Cá Nhân
         function viewInfo(stt) {
             const student = studentDataStore[stt];
             if (!student) return;
@@ -213,32 +338,24 @@
             document.getElementById('studentName').innerText = `[STT: ${student.stt}] ${student.fullName}`;
             document.getElementById('studentPhone').innerText = student.sdt ? `📞 SĐT PH: ${student.sdt}` : '📞 SĐT PH: Chưa có';
             
+            const totalCount = student.violations ? student.violations.length : 0;
+            document.getElementById('studentTotalViolations').innerText = `🚨 Tổng số lỗi đã mắc phải: ${totalCount} lỗi`;
+
             const container = document.getElementById('violationLogs');
             container.innerHTML = '';
 
-            if (student.violations.length === 0) {
-                container.innerHTML = '<p style="color: #2e7d32; font-size: 13px;">✨ Không có vi phạm nào.</p>';
+            if (totalCount === 0) {
+                container.innerHTML = '<p style="color: #2e7d32; font-size: 13px; font-weight: 500;">✨ Chưa vi phạm lỗi nào từ đầu năm.</p>';
             } else {
                 student.violations.forEach(item => {
-                    // Xử lý định dạng ngày tháng đẹp mắt (dd/MM/yyyy)
-                    let formattedDate = 'Không ghi';
-                    if (item.date) {
-                        const d = new Date(item.date);
-                        if (!isNaN(d.getTime())) {
-                            const day = String(d.getDate()).padStart(2, '0');
-                            const month = String(d.getMonth() + 1).padStart(2, '0');
-                            const year = d.getFullYear();
-                            formattedDate = `${day}/${month}/${year}`;
-                        } else {
-                            formattedDate = item.date;
-                        }
-                    }
-
+                    let cleanContent = (item.content || '').replace(/^Nội dung:\s*/i, '');
+                    
                     const card = document.createElement('div');
                     card.className = 'violation-card';
+                    
                     card.innerHTML = `
-                        <div class="violation-date">📅 Ngày: ${formattedDate}</div>
-                        <div class="violation-text">⚠️ Nội dung: ${item.content}</div>
+                        <div class="violation-date">📅 Ngày: ${formatDateString(item.date)}</div>
+                        <div class="violation-text">⚠️ Nội dung: ${cleanContent}</div>
                     `;
                     container.appendChild(card);
                 });
@@ -250,6 +367,86 @@
         function closeModal() {
             document.getElementById('infoModal').style.display = 'none';
         }
+
+        // 8. Render Bảng Tóm Tắt Tuần Hiện Tại
+        function renderSummaryTable() {
+            const tbody = document.getElementById('summaryTableBody');
+            tbody.innerHTML = '';
+
+            let weekViolationsCount = 0;
+            let hasWeekViolations = false;
+
+            for (let stt in studentDataStore) {
+                const student = studentDataStore[stt];
+
+                // Chỉ lấy lỗi trong tuần hiện tại
+                const currentWeekViolations = (student.violations || [])
+                    .filter(v => isDateInCurrentWeek(v.date));
+
+                if (currentWeekViolations.length > 0) {
+                    hasWeekViolations = true;
+                    weekViolationsCount += currentWeekViolations.length;
+
+                    const row = document.createElement('tr');
+
+                    const violationListHtml = currentWeekViolations.map(v => {
+                        let cleanContent = (v.content || '').replace(/^Nội dung:\s*/i, '');
+                        return `• <b>[${formatDateString(v.date)}]</b>: ${cleanContent}`;
+                    }).join('<br>');
+
+                    row.innerHTML = `
+                        <td style="text-align: center; font-weight: bold;">
+                            ${student.stt}
+                        </td>
+
+                        <td>
+                            <b>${student.fullName}</b>
+                        </td>
+
+                        <td style="text-align: center;">
+                            <span class="badge-count">
+                                ${currentWeekViolations.length} lỗi
+                            </span>
+                        </td>
+
+                        <td>
+                            ${violationListHtml}
+                        </td>
+                    `;
+
+                    tbody.appendChild(row);
+                }
+            }
+
+            if (!hasWeekViolations) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="4"
+                            style="text-align: center; color: #2e7d32; padding: 20px;">
+                            🎉 Xuất sắc! Tuần này chưa có học sinh nào vi phạm.
+                        </td>
+                    </tr>
+                `;
+            }
+
+            document.getElementById('violationCountBadge').innerText = weekViolationsCount;
+        }
+
+        function openSummaryModal() {
+            renderSummaryTable();
+            document.getElementById('summaryModal').style.display = 'flex';
+        }
+
+        function closeSummaryModal() {
+            document.getElementById('summaryModal').style.display = 'none';
+        }
+
+        window.onclick = function(event) {
+            const summaryModal = document.getElementById('summaryModal');
+            const infoModal = document.getElementById('infoModal');
+            if (event.target === summaryModal) closeSummaryModal();
+            if (event.target === infoModal) closeModal();
+        };
 
         loadSheetData();
     </script>
