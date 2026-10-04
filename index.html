@@ -28,11 +28,14 @@
         .seat {
             flex: 1; background: #ffffff; border: 1px solid #90caf9; border-radius: 4px;
             padding: 8px 2px; font-size: 12px; font-weight: 600; color: #2c3e50;
-            cursor: pointer; transition: all 0.2s ease; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            cursor: grab; transition: all 0.2s ease; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
             min-height: 38px; display: flex; align-items: center; justify-content: center;
+            user-select: none;
         }
+        .seat:active { cursor: grabbing; }
         .seat:hover { background-color: #1976d2; color: #ffffff; }
         .seat.empty { color: #aaa; font-weight: normal; font-style: italic; background: #fafafa; }
+        .seat.drag-over { border: 2px dashed #e53935; background-color: #ffebee !important; color: #c62828; }
 
         /* BẢNG VÀ BÀN GIÁO VIÊN */
         .front-area { margin-top: 10px; border-top: 2px dashed #ccc; padding-top: 20px; }
@@ -58,7 +61,6 @@
             transition: transform 0.2s; z-index: 999; display: flex; align-items: center; justify-content: center;
         }
         .bell-btn:hover { transform: scale(1.1); background-color: #e3f2fd; }
-
         .bell-badge {
             position: absolute; top: -5px; right: -5px; background-color: #e53935;
             color: white; border-radius: 50%; padding: 2px 6px; font-size: 11px; font-weight: bold;
@@ -116,9 +118,7 @@
                             <th>Chi tiết vi phạm</th>
                         </tr>
                     </thead>
-                    <tbody id="summaryTableBody">
-                        <!-- Dữ liệu điền tự động -->
-                    </tbody>
+                    <tbody id="summaryTableBody"></tbody>
                 </table>
             </div>
         </div>
@@ -138,88 +138,59 @@
     </div>
 
     <script>
-        const GOOGLE_SHEET_API_URL = "https://script.google.com/macros/s/AKfycbycNRbXqT_AxMw6iS4kzIYZAnlL40OE3rQReF-QsNbAf062T10wy17v-zobVVkr49EATw/exec";
+        const GOOGLE_SHEET_API_URL = "https://script.google.com/macros/s/AKfycbwtQGkmPXZsdpvnRTpeoXquFqhOxn4nbHOaNX9MXoiwVPPZhyBFmXZ24PRj_VVB-ijPdA/exec";
+        const TEACHER_PASSWORD = "7512240"; // 🔐 Mật khẩu xác nhận dành cho giáo viên (Có thể tự đổi)
 
         let studentDataStore = {};
-        // 1. Hàm parseDate mới: Xử lý triệt để cả chuỗi "2026-09-29T17:00:00.000Z" lẫn "30/9/2026"
-            function parseDate(dateString) {
-                if (!dateString) return null;
-                if (dateString instanceof Date) return dateString;
+        let draggedSeatIndex = null;
 
-                const str = dateString.toString().trim();
-
-                // Nếu là chuỗi ISO chứa 'T' (ví dụ: 2026-09-29T17:00:00.000Z)
-                if (str.includes('T')) {
-                    const datePart = str.split('T')[0]; // Lấy phần "2026-09-29"
-                    const parts = datePart.split('-');
-                    if (parts.length === 3) {
-                        return new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
-                    }
-                }
-
-                // Nếu là chuỗi dạng DD/MM/YYYY hoặc D/M/YYYY (ví dụ: 30/9/2026)
-                if (str.includes('/')) {
-                    const datePart = str.split(' ')[0]; // Lấy phần ngày trước dấu cách (nếu có)
-                    const parts = datePart.split('/');
-                    if (parts.length === 3) {
-                        return new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
-                    }
-                }
-
-                // Nếu là chuỗi YYYY-MM-DD
-                if (str.includes('-')) {
-                    const parts = str.split('-');
-                    if (parts.length === 3) {
-                        return new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
-                    }
-                }
-
-                const parsed = new Date(str);
-                return isNaN(parsed.getTime()) ? null : parsed;
+        function parseDate(dateString) {
+            if (!dateString) return null;
+            if (dateString instanceof Date) return dateString;
+            const str = dateString.toString().trim();
+            if (str.includes('T')) {
+                const datePart = str.split('T')[0];
+                const parts = datePart.split('-');
+                if (parts.length === 3) return new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
             }
-
-            // 2. Định dạng ngày hiển thị cực sạch dạng DD/MM/YYYY
-            function formatDateString(dateStr) {
-                const d = parseDate(dateStr);
-                if (!d) return dateStr || 'Không ghi';
-
-                const day = String(d.getDate()).padStart(2, '0');
-                const month = String(d.getMonth() + 1).padStart(2, '0');
-                const year = d.getFullYear();
-
-                return `${day}/${month}/${year}`;
+            if (str.includes('/')) {
+                const datePart = str.split(' ')[0];
+                const parts = datePart.split('/');
+                if (parts.length === 3) return new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
             }
+            if (str.includes('-')) {
+                const parts = str.split('-');
+                if (parts.length === 3) return new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+            }
+            const parsed = new Date(str);
+            return isNaN(parsed.getTime()) ? null : parsed;
+        }
 
-        // 3. Hàm kiểm tra ngày thuộc tuần hiện tại (Đã quy đổi múi giờ chuẩn)
+        function formatDateString(dateStr) {
+            const d = parseDate(dateStr);
+            if (!d) return dateStr || 'Không ghi';
+            const day = String(d.getDate()).padStart(2, '0');
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            return `${day}/${month}/${d.getFullYear()}`;
+        }
+
         function isDateInCurrentWeek(dateString) {
             const date = parseDate(dateString);
             if (!date) return false;
-
             const today = new Date();
-
-            // Đưa về 00:00:00 local time
             date.setHours(0, 0, 0, 0);
             today.setHours(0, 0, 0, 0);
-
-            const day = today.getDay(); // Chủ nhật = 0, Thứ 2 = 1,...
+            const day = today.getDay();
             const monday = new Date(today);
-
-            if (day === 0) {
-                monday.setDate(today.getDate() - 6);
-            } else {
-                monday.setDate(today.getDate() - (day - 1));
-            }
-
+            monday.setDate(today.getDate() - (day === 0 ? 6 : day - 1));
             monday.setHours(0, 0, 0, 0);
-
             const sunday = new Date(monday);
             sunday.setDate(monday.getDate() + 6);
             sunday.setHours(23, 59, 59, 999);
-
             return date >= monday && date <= sunday;
         }
 
-        // 4. Khởi tạo 48 bàn trống
+        // Khởi tạo 48 bàn + sự kiện Drag & Drop
         function initSeating() {
             const seatingArea = document.getElementById('seatingArea');
             seatingArea.innerHTML = '';
@@ -238,8 +209,16 @@
                         const seat = document.createElement('div');
                         seat.className = 'seat empty';
                         seat.id = `seat-${seatIndex}`;
+                        seat.dataset.seatIndex = seatIndex;
                         seat.innerText = `Chỗ ${seatIndex}`;
-                        
+                        seat.draggable = true;
+
+                        // Sự kiện Drag & Drop
+                        seat.addEventListener('dragstart', handleDragStart);
+                        seat.addEventListener('dragover', handleDragOver);
+                        seat.addEventListener('dragleave', handleDragLeave);
+                        seat.addEventListener('drop', handleDrop);
+
                         desk.appendChild(seat);
                     }
                     col.appendChild(desk);
@@ -248,50 +227,127 @@
             }
         }
 
-        // 5. Tạo tên gọn
+        // Xử lý logic Drag & Drop
+        function handleDragStart(e) {
+            draggedSeatIndex = parseInt(this.dataset.seatIndex);
+            e.dataTransfer.setData('text/plain', draggedSeatIndex);
+        }
+
+        function handleDragOver(e) {
+            e.preventDefault();
+            this.classList.add('drag-over');
+        }
+
+        function handleDragLeave() {
+            this.classList.remove('drag-over');
+        }
+
+        async function handleDrop(e) {
+            e.preventDefault();
+            this.classList.remove('drag-over');
+            const targetSeatIndex = parseInt(this.dataset.seatIndex);
+
+            if (draggedSeatIndex === targetSeatIndex) return;
+
+            // Tìm học sinh ở 2 vị trí
+            const studentA = Object.values(studentDataStore).find(s => s.viTri === draggedSeatIndex);
+            const studentB = Object.values(studentDataStore).find(s => s.viTri === targetSeatIndex);
+
+            if (!studentA && !studentB) return; // Cả 2 bàn đều trống
+
+            const nameA = studentA ? studentA.fullName : "Chỗ trống";
+            const nameB = studentB ? studentB.fullName : "Chỗ trống";
+
+            // Yêu cầu mật khẩu từ Giáo viên
+            const pwd = prompt(`🔐 XÁC NHẬN ĐỔI CHỖ:\nBạn có muốn đổi vị trí giữa:\n- ${nameA} (Vị trí ${draggedSeatIndex})\n- ${nameB} (Vị trí ${targetSeatIndex})\n\nNhập mật khẩu Giáo viên để thực hiện:`);
+
+            if (pwd === null) return; // Nhấn Hủy
+
+            if (pwd !== TEACHER_PASSWORD) {
+                alert("❌ Mật khẩu không chính xác! Không thể thay đổi vị trí.");
+                return;
+            }
+
+            // Tiến hành cập nhật vị trí
+            const updates = [];
+            if (studentA) {
+                studentA.viTri = targetSeatIndex;
+                updates.push({ stt: studentA.stt, viTri: targetSeatIndex });
+            }
+            if (studentB) {
+                studentB.viTri = draggedSeatIndex;
+                updates.push({ stt: studentB.stt, viTri: draggedSeatIndex });
+            }
+
+            // Render lại giao diện web
+            renderSeats();
+
+            // Gửi dữ liệu cập nhật về Google Sheet
+            document.getElementById('statusText').innerText = "⏳ Đang lưu vị trí mới lên Google Sheet...";
+            document.getElementById('statusText').style.color = "#1565c0";
+
+            try {
+                const res = await fetch(GOOGLE_SHEET_API_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: "updateSeats", updates: updates })
+                });
+                document.getElementById('statusText').innerText = "✅ Đã cập nhật vị trí mới thành công!";
+                document.getElementById('statusText').style.color = "#2e7d32";
+            } catch (err) {
+                console.error("Lỗi cập nhật:", err);
+                alert("❌ Không thể đồng bộ lên Google Sheet. Vui lòng kiểm tra lại kết nối!");
+            }
+        }
+
         function generateShortNames(fullNameList) {
             const shortNameMap = {};
             const groups = {};
-
             fullNameList.forEach(fullName => {
                 const words = fullName.trim().split(/\s+/);
                 const firstName = words[words.length - 1]; 
                 if (!groups[firstName]) groups[firstName] = [];
-                groups[firstName].push({
-                    fullName: fullName,
-                    lastName: words[0], 
-                    firstName: firstName
-                });
+                groups[firstName].push({ fullName, lastName: words[0], firstName });
             });
-
             for (let firstName in groups) {
                 const list = groups[firstName];
                 if (list.length === 1) {
                     shortNameMap[list[0].fullName] = firstName;
                 } else {
-                    list.forEach(item => {
-                        shortNameMap[item.fullName] = `${item.lastName} ${item.firstName}`;
-                    });
+                    list.forEach(item => { shortNameMap[item.fullName] = `${item.lastName} ${item.firstName}`; });
                 }
             }
             return shortNameMap;
         }
 
-        // 6. Tải dữ liệu từ Sheet
-        async function loadSheetData() {
+        function renderSeats() {
             initSeating();
+            const fullNameList = Object.values(studentDataStore).map(s => s.fullName);
+            const shortNames = generateShortNames(fullNameList);
+
+            for (let stt in studentDataStore) {
+                const student = studentDataStore[stt];
+                if (student.viTri && student.viTri >= 1 && student.viTri <= 48) {
+                    const seatElem = document.getElementById(`seat-${student.viTri}`);
+                    if (seatElem) {
+                        seatElem.innerText = shortNames[student.fullName] || student.fullName;
+                        seatElem.title = `STT ${student.stt}: ${student.fullName} (Kéo để đổi chỗ)`;
+                        seatElem.classList.remove('empty');
+                        seatElem.onclick = () => viewInfo(student.stt);
+                    }
+                }
+            }
+        }
+
+        async function loadSheetData() {
             try {
                 const response = await fetch(GOOGLE_SHEET_API_URL);
                 const data = await response.json();
-
                 studentDataStore = {};
-                const fullNameList = [];
 
                 data.forEach(item => {
                     if (item.hoTen) {
                         const fullName = item.hoTen.trim();
                         let pos = item.viTri ? parseInt(item.viTri.toString().replace(/\D/g, '')) : null;
-
                         studentDataStore[item.stt] = {
                             stt: item.stt,
                             fullName: fullName,
@@ -299,44 +355,26 @@
                             sdt: item.sdt,
                             violations: item.violations || []
                         };
-                        fullNameList.push(fullName);
                     }
                 });
 
-                const shortNames = generateShortNames(fullNameList);
-
-                for (let stt in studentDataStore) {
-                    const student = studentDataStore[stt];
-                    if (student.viTri && student.viTri >= 1 && student.viTri <= 48) {
-                        const seatElem = document.getElementById(`seat-${student.viTri}`);
-                        if (seatElem) {
-                            seatElem.innerText = shortNames[student.fullName] || student.fullName;
-                            seatElem.title = `STT ${student.stt}: ${student.fullName}`;
-                            seatElem.classList.remove('empty');
-                            seatElem.onclick = () => viewInfo(student.stt);
-                        }
-                    }
-                }
-
+                renderSeats();
                 document.getElementById('statusText').innerText = "✅ Đã đồng bộ dữ liệu thành công!";
                 document.getElementById('statusText').style.color = "#2e7d32";
-
             } catch (error) {
                 console.error("Lỗi tải dữ liệu:", error);
                 document.getElementById('statusText').innerText = "❌ Lỗi kết nối dữ liệu Google Sheet!";
                 document.getElementById('statusText').style.color = "#d32f2f";
             }
-
             renderSummaryTable();
         }
 
-        // 7. Hiển thị Popup Cá Nhân
         function viewInfo(stt) {
             const student = studentDataStore[stt];
             if (!student) return;
 
             document.getElementById('studentName').innerText = `[STT: ${student.stt}] ${student.fullName}`;
-            document.getElementById('studentPhone').innerText = student.sdt ? `📞 SĐT PH: ${student.sdt}` : '📞 SĐT PH: Chưa có';
+            document.getElementById('studentPhone').innerText = student.sdt ? `📞 SĐT PH: ${'0' + student.sdt}` : '📞 SĐT PH: Chưa có';
             
             const totalCount = student.violations ? student.violations.length : 0;
             document.getElementById('studentTotalViolations').innerText = `🚨 Tổng số lỗi đã mắc phải: ${totalCount} lỗi`;
@@ -349,10 +387,8 @@
             } else {
                 student.violations.forEach(item => {
                     let cleanContent = (item.content || '').replace(/^Nội dung:\s*/i, '');
-                    
                     const card = document.createElement('div');
                     card.className = 'violation-card';
-                    
                     card.innerHTML = `
                         <div class="violation-date">📅 Ngày: ${formatDateString(item.date)}</div>
                         <div class="violation-text">⚠️ Nội dung: ${cleanContent}</div>
@@ -360,75 +396,43 @@
                     container.appendChild(card);
                 });
             }
-
             document.getElementById('infoModal').style.display = 'flex';
         }
 
-        function closeModal() {
-            document.getElementById('infoModal').style.display = 'none';
-        }
+        function closeModal() { document.getElementById('infoModal').style.display = 'none'; }
 
-        // 8. Render Bảng Tóm Tắt Tuần Hiện Tại
         function renderSummaryTable() {
             const tbody = document.getElementById('summaryTableBody');
             tbody.innerHTML = '';
-
             let weekViolationsCount = 0;
             let hasWeekViolations = false;
 
             for (let stt in studentDataStore) {
                 const student = studentDataStore[stt];
-
-                // Chỉ lấy lỗi trong tuần hiện tại
-                const currentWeekViolations = (student.violations || [])
-                    .filter(v => isDateInCurrentWeek(v.date));
+                const currentWeekViolations = (student.violations || []).filter(v => isDateInCurrentWeek(v.date));
 
                 if (currentWeekViolations.length > 0) {
                     hasWeekViolations = true;
                     weekViolationsCount += currentWeekViolations.length;
-
                     const row = document.createElement('tr');
-
                     const violationListHtml = currentWeekViolations.map(v => {
                         let cleanContent = (v.content || '').replace(/^Nội dung:\s*/i, '');
                         return `• <b>[${formatDateString(v.date)}]</b>: ${cleanContent}`;
                     }).join('<br>');
 
                     row.innerHTML = `
-                        <td style="text-align: center; font-weight: bold;">
-                            ${student.stt}
-                        </td>
-
-                        <td>
-                            <b>${student.fullName}</b>
-                        </td>
-
-                        <td style="text-align: center;">
-                            <span class="badge-count">
-                                ${currentWeekViolations.length} lỗi
-                            </span>
-                        </td>
-
-                        <td>
-                            ${violationListHtml}
-                        </td>
+                        <td style="text-align: center; font-weight: bold;">${student.stt}</td>
+                        <td><b>${student.fullName}</b></td>
+                        <td style="text-align: center;"><span class="badge-count">${currentWeekViolations.length} lỗi</span></td>
+                        <td>${violationListHtml}</td>
                     `;
-
                     tbody.appendChild(row);
                 }
             }
 
             if (!hasWeekViolations) {
-                tbody.innerHTML = `
-                    <tr>
-                        <td colspan="4"
-                            style="text-align: center; color: #2e7d32; padding: 20px;">
-                            🎉 Xuất sắc! Tuần này chưa có học sinh nào vi phạm.
-                        </td>
-                    </tr>
-                `;
+                tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: #2e7d32; padding: 20px;">🎉 Xuất sắc! Tuần này chưa có học sinh nào vi phạm.</td></tr>`;
             }
-
             document.getElementById('violationCountBadge').innerText = weekViolationsCount;
         }
 
@@ -437,15 +441,11 @@
             document.getElementById('summaryModal').style.display = 'flex';
         }
 
-        function closeSummaryModal() {
-            document.getElementById('summaryModal').style.display = 'none';
-        }
+        function closeSummaryModal() { document.getElementById('summaryModal').style.display = 'none'; }
 
         window.onclick = function(event) {
-            const summaryModal = document.getElementById('summaryModal');
-            const infoModal = document.getElementById('infoModal');
-            if (event.target === summaryModal) closeSummaryModal();
-            if (event.target === infoModal) closeModal();
+            if (event.target === document.getElementById('summaryModal')) closeSummaryModal();
+            if (event.target === document.getElementById('infoModal')) closeModal();
         };
 
         loadSheetData();
